@@ -1,0 +1,60 @@
+name: Prueba individual acta FIFLP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probar-acta:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Obtener codigo
+        uses: actions/checkout@v4
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar navegador
+        run: |
+          python -m pip install playwright
+          python -m playwright install chromium --with-deps
+      - name: Extraer solo el acta 283916
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          mkdir -p prueba_resultados
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+          from scripts.fetch_fiflp_actas import fetch_and_parse_acta, _launch, UA, _fetch_acta_html, is_empty_acta
+
+          destino = Path('prueba_resultados')
+          with sync_playwright() as pw:
+              browser = _launch(pw)
+              try:
+                  page = browser.new_context(user_agent=UA).new_page()
+                  resultado = fetch_and_parse_acta(page, '283916', max_retries=2)
+                  if resultado is None or is_empty_acta(resultado):
+                      print('No se pudo extraer un acta valida; se guarda HTML de diagnostico.')
+                      (destino / 'diagnostico.html').write_text(_fetch_acta_html(page, '283916'), encoding='utf-8')
+                  else:
+                      (destino / 'acta_283916.json').write_text(
+                          json.dumps(resultado, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
+                      print('Acta extraida. Cabecera:', resultado.get('header'))
+              finally:
+                  browser.close()
+          PY
+      - name: Guardar resultados descargables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prueba-acta-283916
+          path: |
+            prueba_resultados/
+            scripts/tests/fixtures/acta_failed_283916.html
+          if-no-files-found: warn
+          retention-days: 7
